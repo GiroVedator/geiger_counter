@@ -1,7 +1,7 @@
 use serialport::SerialPort;
 use std::io::{Read, Write};
 use std::time::Duration;
-
+#[allow(dead_code)]
 /// Handles serial port connection for Geiger reader
 pub struct Connection {
     port: Box<dyn SerialPort>,
