@@ -1,31 +1,28 @@
-//mod device;
 mod connection;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> 
 {
     // create connection
-    let mut port = connection::Connection::new("/dev/ttyUSB0", 115200)?;
-    println!("Connected to serial port!");
+    let mut connection = connection::SerialConnection::new("/dev/ttyUSB0", 115200)?;
 
-    // loop 
-    // {  
-        
-        
-    //     // pass the connection to the device
-    //     // use the device to get the version
-    //     // continuosly read CPM and temperature and GYRO
-    //     // store the data into mongoDB
-    // }
+    let response = connection.get_version()?;
+    println!("Version: {}", response.trim());
 
-    
+    let cpm = connection.get_cpm()?;
+    println!("CPM: {}", cpm);
 
-    
-    // //let mut device = device::Device::new("Geiger Reader")?;
-    // //device.initialize(port)?;
-    port.write(b"<GETVER>>")?;
-    let version = port.read(&mut [0;32])?;
-    //let version = device.get_version()?;
-    
-    println!("Version: {}", version);
-    port.close()
+    let gyro = connection.get_gyro()?;
+    println!("Gyro: {}", gyro);
+
+    let voltage = connection.get_voltage()?;
+    println!("Voltage: {}V", voltage);
+
+    // let config = connection.get_config()?;
+    // println!("Config: {}", config.trim());
+
+    let temp = connection.get_temperature()?;
+    println!("Temperature: {}°C", temp);
+
+    connection.close()?;
+    Ok(())
 }

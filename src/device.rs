@@ -3,18 +3,6 @@ use std::io::{Read, Write};
 use serialport::{SerialPort;
 //use std::time::Duration;
 
-const VERSION_COMMAND: &[u8] = b"<GETVER>>";
-const SERIAL_COMMAND: &[u8] = b"<GETSERIAL>>";
-const CPM_COMMAND: &[u8] = b"<GETCPM>>";
-const GYRO_COMMAND: &[u8] = b"<GETGYRO>>";
-const VOLT_COMMAND: &[u8] = b"<GETVOLT>>";
-const DATE_COMMAND: &[u8] = b"<GETDATETIME>>";
-const CONFIG_COMMAND: &[u8] = b"<GETCFG>>";
-const TEMP_COMMAND: &[u8] = b"<GETTEMP>>";
-const POWOFF_COMMAND: &[u8] = b"<POWEROFF>>";
-const POWON_COMMAND: &[u8] = b"<POWERON>>";
-const SETTIME_COMMAND: &[u8] = b"<SETDATETIME>>";
-const REBOOT_COMMAND: &[u8] = b"<REBOOT>>";
 
 pub struct Device {
 	name: String,
