@@ -5,6 +5,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>
     // create connection
     let mut connection = connection::SerialConnection::new("/dev/ttyUSB0", 115200)?;
 
+    connection.drain()?;
+    connection.extract_config()?;
+    
     let response = connection.get_version()?;
     println!("Version: {}", response.trim());
 
@@ -17,8 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>>
     let voltage = connection.get_voltage()?;
     println!("Voltage: {}V", voltage);
 
-    // let config = connection.get_config()?;
-    // println!("Config: {}", config.trim());
+
+    connection.print_config();
 
     let temp = connection.get_temperature()?;
     println!("Temperature: {}°C", temp);
