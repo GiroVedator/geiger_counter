@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>
 
     connection.drain()?;
     connection.extract_config()?;
-    
+    connection.usv_calibration()?;
     let response = connection.get_version()?;
     println!("Version: {}", response.trim());
 
@@ -20,9 +20,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>
     let voltage = connection.get_voltage()?;
     println!("Voltage: {}V", voltage);
 
-
-    connection.print_config();
-
+    let nSv = connection.get_nSv()?;
+    println!("Radiation: {} nSv/h", nSv);
+    
     let temp = connection.get_temperature()?;
     println!("Temperature: {}°C", temp);
 

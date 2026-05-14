@@ -1,6 +1,26 @@
 use serialport::SerialPort;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
+use polyfit::MonomialFit;
+
+struct Fit{
+    coeffs: Vec<f64>,
+}
+
+impl Fit {
+    fn new(x: &[f64], y: &[f64], degree: usize) -> Result<Self, Box<dyn std::error::Error>> {
+        let data: Vec<(f64, f64)> = x.iter().zip(y.iter()).map(|(x, y)| (*x, *y)).collect();
+        let fit = MonomialFit::new(&data, degree)?;
+        Ok(Fit { coeffs: fit.coefficients().to_vec() })
+    }
+
+    pub fn predict(&self, x: f64) -> f64 {
+        let mut sum = 0.0;
+        sum = 1000.0*(self.coeffs[1]*x + self.coeffs[0]);
+        sum
+    }
+}
 
 enum COMMAND {
     VERSION,
@@ -41,7 +61,7 @@ impl COMMAND {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FieldType {
     LittleEndianFloat,
-    Byte,
+    HighEndianUnsignedInt
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,7 +72,7 @@ struct ConfigField {
     field_type: Option<FieldType>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Config {
     CalibrationUSv0,
     CalibrationUSv1,
@@ -61,23 +81,25 @@ enum Config {
     AlarmValueUSv,
     Baudrate,
     ThresholdUSv,
-    CalibrationCPM_0,
-    CalibrationCPM_1,
-    CalibrationCPM_2,
+    CalibrationCpm0,
+    CalibrationCpm1,
+    CalibrationCpm2,
+    ThresholdCpm,
 }
 
 impl Config {
-    const ALL: [Config; 10] = [
-        Config::CalibrationCPM_0,
+    const ALL: [Config; 11] = [
+        Config::CalibrationCpm0,
         Config::CalibrationUSv0,
-        Config::CalibrationCPM_1,
+        Config::CalibrationCpm1,
         Config::CalibrationUSv1,
-        Config::CalibrationCPM_2,
+        Config::CalibrationCpm2,
         Config::CalibrationUSv2,
         Config::IdleTextState,
         Config::AlarmValueUSv,
         Config::Baudrate,
         Config::ThresholdUSv,
+        Config::ThresholdCpm,
     ];
 
     fn all() -> &'static [Config] {
@@ -86,11 +108,11 @@ impl Config {
 
     fn field(&self) -> ConfigField {
         match self {
-            Config::CalibrationCPM_0 => ConfigField {
+            Config::CalibrationCpm0 => ConfigField {
                 index: 8,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
+                field_type: Some(FieldType::LittleEndianUnsignedInt),
             },
             Config::CalibrationUSv0 => ConfigField {
                 index: 10,
@@ -98,11 +120,11 @@ impl Config {
                 description: "",
                 field_type: Some(FieldType::LittleEndianFloat),
             },
-            Config::CalibrationCPM_1 => ConfigField {
+            Config::CalibrationCpm1 => ConfigField {
                 index: 14,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
+                field_type: Some(FieldType::LittleEndianUnsignedInt),
             },
             Config::CalibrationUSv1 => ConfigField {
                 index: 16,
@@ -110,11 +132,11 @@ impl Config {
                 description: "",
                 field_type: Some(FieldType::LittleEndianFloat),
             },
-            Config::CalibrationCPM_2 => ConfigField {
+            Config::CalibrationCpm2 => ConfigField {
                 index: 20,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
+                field_type: Some(FieldType::LittleEndianUnsignedInt),
             },
             Config::CalibrationUSv2 => ConfigField {
                 index: 22,
@@ -148,6 +170,12 @@ impl Config {
                 description: "",
                 field_type: Some(FieldType::LittleEndianFloat),
             },
+            Config::ThresholdCpm => ConfigField {
+                index: 62,
+                size: 2,
+                description: "",
+                field_type: Some(FieldType::LittleEndianUnsignedInt),
+            },
         }
     }
 }
@@ -156,7 +184,8 @@ impl Config {
 #[allow(non_snake_case, dead_code)]
 pub struct SerialConnection {
     port: Box<dyn SerialPort>,
-    config: Vec<String>,
+    config: HashMap<Config, String>,
+    cpm_to_nSv_fit: Option<Fit>,
 }
 
 impl SerialConnection {
@@ -166,7 +195,7 @@ impl SerialConnection {
             .timeout(Duration::from_secs(1))
             .open()?;
 
-        let mut connection = SerialConnection { port, config: Vec::new() };
+        let connection = SerialConnection { port, config: HashMap::new(), cpm_to_nSv_fit: None };
         Ok(connection)
     }
 
@@ -195,20 +224,33 @@ impl SerialConnection {
                     let bytes = [value[0], value[1], value[2], value[3]];
                     format!("{}", f32::from_le_bytes(bytes))
                 }
-                _ => String::from_utf8_lossy(value).trim().to_string(),
+                Some(FieldType::HighEndianUnsignedInt) if field.size == 2 => {
+                    let bytes = [value[0], value[1]];
+                    format!("{}", u16::from_be_bytes(bytes))
+                }
+                _ =>format!("{}", u8::from_le_bytes([value[0]]))
             };
 
-            self.config.push(format!("{:?}: {}", config, formatted_value));
+            self.config.insert(*config, formatted_value);
         }
         Ok(())
     }
 
     pub fn print_config(&mut self) {
-        for (i, line) in self.config.iter().enumerate() {
-            println!("{}: {}", i, line);
+        for config in Config::all() {
+            if let Some(value) = self.config.get(config) {
+                println!("{:?}: {}", config, value);
+            }
         }
     }
 
+    pub fn usv_calibration(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let x = vec![0.0, self.config.get(&Config::CalibrationCpm0).unwrap().parse::<f64>().unwrap(), self.config.get(&Config::CalibrationCpm1).unwrap().parse::<f64>().unwrap(), self.config.get(&Config::CalibrationCpm2).unwrap().parse::<f64>().unwrap()];
+        let y = vec![0.0, self.config.get(&Config::CalibrationUSv0).unwrap().parse::<f64>().unwrap(), self.config.get(&Config::CalibrationUSv1).unwrap().parse::<f64>().unwrap(), self.config.get(&Config::CalibrationUSv2).unwrap().parse::<f64>().unwrap()];
+        
+        self.cpm_to_nSv_fit = Some(Fit::new(&x, &y, 2)?);
+        Ok(())
+    }
     fn run_command<const N: usize>(&mut self, command: &[u8]) -> Result<[u8; N], Box<dyn std::error::Error>> {
         self.port.write_all(command)?;
         self.port.flush()?;
@@ -222,7 +264,6 @@ impl SerialConnection {
         Ok(buf)
     }
 
-
     pub fn get_version(&mut self) -> Result<String, Box<dyn std::error::Error>> {
         let buffer = self.run_command::<14>(COMMAND::VERSION.as_bytes())?;
         let response = String::from_utf8_lossy(&buffer).to_string();
@@ -231,23 +272,23 @@ impl SerialConnection {
 
     pub fn get_cpm(&mut self) -> Result<u16, Box<dyn std::error::Error>> {
         let buffer = self.run_command::<2>(COMMAND::CPM.as_bytes())?;
+        println!("Raw CPM bytes: {:?}", buffer);
         let cpm = u16::from_be_bytes(buffer);
         Ok(cpm)
     }
 
-    pub fn get_usV(&mut self) -> Result<f32, Box<dyn std::error::Error>> {
-        let buffer = self.run_command::<4>(COMMAND::USV.as_bytes())?;
-        let usv = u32::from_be_bytes(buffer) as f32 / 100.0;
-
-        // conversion
-        Ok(usv)
-    }  
+    pub fn get_nSv(&mut self) -> Result<f32, Box<dyn std::error::Error>> {
+        let cpm = self.get_cpm()?;
+        if let Some(fit) = &self.cpm_to_nSv_fit {
+            return Ok(fit.predict(cpm as f64) as f32);
+        }    
+        Err("CPM to nSv fit not calibrated".into())}  
 
     pub fn get_gyro(&mut self) -> Result<String, Box<dyn std::error::Error>> {
         let buffer = self.run_command::<7>(COMMAND::GYRO.as_bytes())?;
-        let x = u16::from_be_bytes([buffer[0], buffer[1]]);
-        let y = u16::from_be_bytes([buffer[2], buffer[3]]);
-        let z = u16::from_be_bytes([buffer[4], buffer[5]]);
+        let x = u16::from_le_bytes([buffer[0], buffer[1]]);
+        let y = u16::from_le_bytes([buffer[2], buffer[3]]);
+        let z = u16::from_le_bytes([buffer[4], buffer[5]]);
         let response = format!("X: {}, Y: {}, Z: {}", x, y, z);
         Ok(response)
     }
