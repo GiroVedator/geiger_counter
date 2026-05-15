@@ -112,7 +112,7 @@ impl Config {
                 index: 8,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianUnsignedInt),
+                field_type: Some(FieldType::HighEndianUnsignedInt),
             },
             Config::CalibrationUSv0 => ConfigField {
                 index: 10,
@@ -124,7 +124,7 @@ impl Config {
                 index: 14,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianUnsignedInt),
+                field_type: Some(FieldType::HighEndianUnsignedInt),
             },
             Config::CalibrationUSv1 => ConfigField {
                 index: 16,
@@ -136,7 +136,7 @@ impl Config {
                 index: 20,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianUnsignedInt),
+                field_type: Some(FieldType::HighEndianUnsignedInt),
             },
             Config::CalibrationUSv2 => ConfigField {
                 index: 22,
@@ -174,7 +174,7 @@ impl Config {
                 index: 62,
                 size: 2,
                 description: "",
-                field_type: Some(FieldType::LittleEndianUnsignedInt),
+                field_type: Some(FieldType::HighEndianUnsignedInt),
             },
         }
     }
@@ -272,7 +272,6 @@ impl SerialConnection {
 
     pub fn get_cpm(&mut self) -> Result<u16, Box<dyn std::error::Error>> {
         let buffer = self.run_command::<2>(COMMAND::CPM.as_bytes())?;
-        println!("Raw CPM bytes: {:?}", buffer);
         let cpm = u16::from_be_bytes(buffer);
         Ok(cpm)
     }
