@@ -1,184 +1,9 @@
 use serialport::SerialPort;
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::Duration;
-use polyfit::MonomialFit;
-
-struct Fit{
-    coeffs: Vec<f64>,
-}
-
-impl Fit {
-    fn new(x: &[f64], y: &[f64], degree: usize) -> Result<Self, Box<dyn std::error::Error>> {
-        let data: Vec<(f64, f64)> = x.iter().zip(y.iter()).map(|(x, y)| (*x, *y)).collect();
-        let fit = MonomialFit::new(&data, degree)?;
-        Ok(Fit { coeffs: fit.coefficients().to_vec() })
-    }
-
-    pub fn predict(&self, x: f64) -> f64 {
-        let mut sum = 0.0;
-        sum = 1000.0*(self.coeffs[1]*x + self.coeffs[0]);
-        sum
-    }
-}
-
-enum COMMAND {
-    VERSION,
-    CPM,
-    USV,
-    GYRO,
-    VOLT,
-    CONFIG,
-    TEMP,
-    SERIAL,
-    DATE,
-    POWOFF,
-    POWON,
-    SETTIME,
-    REBOOT,
-}
-
-impl COMMAND {
-    fn as_bytes(&self) -> &'static [u8] {
-        match self {
-            COMMAND::VERSION => b"<GETVER>>",
-            COMMAND::CPM => b"<GETCPM>>",
-            COMMAND::USV => b"<GETUSV>>",
-            COMMAND::GYRO => b"<GETGYRO>>",
-            COMMAND::VOLT => b"<GETVOLT>>",
-            COMMAND::CONFIG => b"<GETCFG>>",
-            COMMAND::TEMP => b"<GETTEMP>>",
-            COMMAND::SERIAL => b"<GETSERIAL>>",
-            COMMAND::DATE => b"<GETDATETIME>>",
-            COMMAND::POWOFF => b"<POWEROFF>>",
-            COMMAND::POWON => b"<POWERON>>",
-            COMMAND::SETTIME => b"<SETDATETIME>>",
-            COMMAND::REBOOT => b"<REBOOT>>",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum FieldType {
-    LittleEndianFloat,
-    HighEndianUnsignedInt
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ConfigField {
-    index: usize,
-    size: usize,
-    description: &'static str,
-    field_type: Option<FieldType>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Config {
-    CalibrationUSv0,
-    CalibrationUSv1,
-    CalibrationUSv2,
-    IdleTextState,
-    AlarmValueUSv,
-    Baudrate,
-    ThresholdUSv,
-    CalibrationCpm0,
-    CalibrationCpm1,
-    CalibrationCpm2,
-    ThresholdCpm,
-}
-
-impl Config {
-    const ALL: [Config; 11] = [
-        Config::CalibrationCpm0,
-        Config::CalibrationUSv0,
-        Config::CalibrationCpm1,
-        Config::CalibrationUSv1,
-        Config::CalibrationCpm2,
-        Config::CalibrationUSv2,
-        Config::IdleTextState,
-        Config::AlarmValueUSv,
-        Config::Baudrate,
-        Config::ThresholdUSv,
-        Config::ThresholdCpm,
-    ];
-
-    fn all() -> &'static [Config] {
-        &Self::ALL
-    }
-
-    fn field(&self) -> ConfigField {
-        match self {
-            Config::CalibrationCpm0 => ConfigField {
-                index: 8,
-                size: 2,
-                description: "",
-                field_type: Some(FieldType::HighEndianUnsignedInt),
-            },
-            Config::CalibrationUSv0 => ConfigField {
-                index: 10,
-                size: 4,
-                description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
-            },
-            Config::CalibrationCpm1 => ConfigField {
-                index: 14,
-                size: 2,
-                description: "",
-                field_type: Some(FieldType::HighEndianUnsignedInt),
-            },
-            Config::CalibrationUSv1 => ConfigField {
-                index: 16,
-                size: 4,
-                description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
-            },
-            Config::CalibrationCpm2 => ConfigField {
-                index: 20,
-                size: 2,
-                description: "",
-                field_type: Some(FieldType::HighEndianUnsignedInt),
-            },
-            Config::CalibrationUSv2 => ConfigField {
-                index: 22,
-                size: 4,
-                description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
-            },
-            Config::IdleTextState => ConfigField {
-                index: 26,
-                size: 1,
-                description: "??",
-                field_type: None,
-            },
-            Config::AlarmValueUSv => ConfigField {
-                index: 27,
-                size: 4,
-                description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
-            },
-            Config::Baudrate => ConfigField {
-                // see https://www.gqelectronicsllc.com/forum/topic.asp?TOPIC_ID=4948 reply#12
-                index: 57,
-                size: 1,
-                description: "64=1200,160=2400,208=4800,232=9600,240=14400,\
-                               244=19200,248=28800,250=38400,252=57600,254=115200",
-                field_type: None,
-            },
-            Config::ThresholdUSv => ConfigField {
-                index: 65,
-                size: 4,
-                description: "",
-                field_type: Some(FieldType::LittleEndianFloat),
-            },
-            Config::ThresholdCpm => ConfigField {
-                index: 62,
-                size: 2,
-                description: "",
-                field_type: Some(FieldType::HighEndianUnsignedInt),
-            },
-        }
-    }
-}
+use crate::fit::Fit;
+use crate::utilities::{COMMAND, Config, FieldType};
+use std::collections::HashMap;
 
 /// Handles serial port connection for Geiger reader
 #[allow(non_snake_case, dead_code)]
@@ -276,10 +101,18 @@ impl SerialConnection {
         Ok(cpm)
     }
 
-    pub fn get_nSv(&mut self) -> Result<f32, Box<dyn std::error::Error>> {
-        let cpm = self.get_cpm()?;
+    pub fn get_nSv(&mut self, cpm: Option<u16>) -> Result<f32, Box<dyn std::error::Error>> {
+        let mut current_cpm: u16 = 0;
+
+        if cpm.is_none() {
+            current_cpm = cpm.unwrap_or(self.get_cpm()?);
+        }
+        else
+        {
+            current_cpm = cpm.unwrap();
+        }
         if let Some(fit) = &self.cpm_to_nSv_fit {
-            return Ok(fit.predict(cpm as f64) as f32);
+            return Ok(fit.predict(current_cpm as f64) as f32);
         }    
         Err("CPM to nSv fit not calibrated".into())}  
 
